@@ -1,0 +1,7 @@
+beautifulsoup4
+faiss-cpu
+openai
+tiktoken
+tqdm
+numpy
+python-dotenv

@@ -1,4 +1,5 @@
 import os
+import pickle
 import urllib
 import xml.etree.ElementTree as ET
 
@@ -19,8 +20,12 @@ AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
 AZURE_OPENAI_KEY = os.getenv("AZURE_OPENAI_KEY")
 EMBEDDING_DEPLOYMENT = os.getenv("EMBEDDING_DEPLOYMENT")
 GPT_DEPLOYMENT = os.getenv("GPT_DEPLOYMENT")
-FAISS_INDEX_FILE = os.getenv("FAISS_INDEX_FILE", "faiss_index.bin")  # Default if not set
+FAISS_INDEX_FILE = os.getenv("FAISS_INDEX_FILE", "faiss_index.bin")
+TEXT_CHUNKS_FILE = os.getenv("TEXT_CHUNKS_FILE", "text_chunks.pkl")
 SITE_URL = os.getenv("SITE_URL")
+
+# Check if the index should be regenerated or loaded
+LOAD_EXISTING_INDEX = os.getenv("LOAD_EXISTING_INDEX", "false").lower() == "true"  # New variable to control loading
 
 
 # Initialize OpenAI client
@@ -160,20 +165,22 @@ def create_faiss_index(embeddings):
     index.add(embeddings)
     return index
 
-def save_faiss_index(index, filepath=FAISS_INDEX_FILE):
-    """Saves the FAISS index to disk."""
-    faiss.write_index(index, filepath)
-    print(f"FAISS index saved to {filepath}")
-
+# Load FAISS index from disk
 def load_faiss_index(filepath=FAISS_INDEX_FILE):
     """Loads a FAISS index from disk."""
     try:
         index = faiss.read_index(filepath)
-        print("FAISS index loaded successfully.")
+        print(f"FAISS index loaded successfully from {filepath}")
         return index
     except Exception as e:
         print(f"Error loading FAISS index: {e}")
         return None
+
+# Save FAISS index to disk
+def save_faiss_index(index, filepath=FAISS_INDEX_FILE):
+    """Saves the FAISS index to disk."""
+    faiss.write_index(index, filepath)
+    print(f"FAISS index saved to {filepath}")
 
 def chunk_website_content(text, url, chunk_size=500):
     """Chunk website content into smaller pieces of text, with their URLs."""
@@ -182,6 +189,28 @@ def chunk_website_content(text, url, chunk_size=500):
     
     # Return the chunks with their corresponding URL
     return [(chunk, url) for chunk in text_chunks]
+
+# Load the text chunks from disk
+def load_text_chunks(filepath=TEXT_CHUNKS_FILE):
+    """Loads the text chunks from disk."""
+    try:
+        with open(filepath, 'rb') as f:
+            text_chunks = pickle.load(f)
+        print(f"Text chunks loaded successfully from {filepath}")
+        return text_chunks
+    except Exception as e:
+        print(f"Error loading text chunks: {e}")
+        return []
+
+# Save the text chunks to disk
+def save_text_chunks(text_chunks, filepath=TEXT_CHUNKS_FILE):
+    """Saves the text chunks to disk."""
+    try:
+        with open(filepath, 'wb') as f:
+            pickle.dump(text_chunks, f)
+        print(f"Text chunks saved to {filepath}")
+    except Exception as e:
+        print(f"Error saving text chunks: {e}")
 
 def find_most_relevant(query, index, text_chunks, top_k=5):
     """Finds the most relevant text chunks for a query using FAISS."""
@@ -192,26 +221,44 @@ def find_most_relevant(query, index, text_chunks, top_k=5):
     relevant_chunks = []
     for i in indices[0]:
         if i < len(text_chunks):  # Only add valid indices
-            relevant_chunks.append(text_chunks[i])
+            chunk, url = text_chunks[i]  # Get chunk and its URL
+            relevant_chunks.append((chunk, url))
     
-    return relevant_chunks if relevant_chunks else ["No relevant content found."]
+    return relevant_chunks if relevant_chunks else [("No relevant content found.", "")]
 
 def generate_answer(query, index, text_chunks):
     """Uses Azure OpenAI to generate an answer based on retrieved context."""
     relevant_chunks = find_most_relevant(query, index, text_chunks)
 
-    context = "\n\n".join(relevant_chunks)
-    
+
+    # Flatten the list of chunks if any chunk is a list of strings.
+    flattened_chunks = []
+    for chunk, url in relevant_chunks:
+        # If the chunk is a list of strings, flatten it
+        if isinstance(chunk, list):
+            flattened_chunks.extend(chunk)
+        elif isinstance(chunk, str):
+            flattened_chunks.append(chunk)
+
+    # Ensure that relevant_chunks contains tuples of (chunk, url)
+    context = "\n\n".join([str(chunk).strip() for chunk in flattened_chunks if chunk and isinstance(chunk, str)])
+ 
+    # If no valid content, return a message indicating no relevant content was found
+    if not context:
+        return "No relevant content found in the retrieved website text."
+
+    # Refined prompt to guide the model
     prompt = f"""
-    You are an AI assistant that provides informative answers based on provided text.
-    
-    Here is relevant information extracted from a website:
+    You are an AI assistant that provides informative answers based on website content.
+
+    Here is relevant content extracted from the website:
     -------------------
     {context}
     -------------------
-    
-    Based on this, answer the following question:
+
+    Based on the information above, answer the following question:
     {query}
+    Be concise and focus on the main topic or key points.
     """
 
     response = client.chat.completions.create(
@@ -222,28 +269,56 @@ def generate_answer(query, index, text_chunks):
         ]
     )
 
-    return response.choices[0].message.content
+    answer = response.choices[0].message.content
+
+    # Add URLs of the relevant chunks to the answer
+    url_references = "\n".join([f"Source: {url}" for _, url in relevant_chunks if url])
+    return f"{answer}\n\n{url_references}"
 
 def main():
     """Main function to scrape, embed, index, and answer queries."""
 
-    # Step 1: Crawl the website to get URLs
-    print("Crawling the website...")
-    all_urls = crawl_website_using_sitemap(SITE_URL)
+    # Step 1: Load the FAISS index if the environment variable is set
+    if LOAD_EXISTING_INDEX:
+        print("Loading existing FAISS index and text chunks...")
+        index = load_faiss_index()
+        all_texts_with_urls = load_text_chunks()
+    else:
+        # Step 1: Crawl the website to get URLs
+        print("Crawling the website...")
+        all_urls = crawl_website_using_sitemap(SITE_URL)
 
-    # Step 2: Scrape content from each URL
-    print("Scraping website content...")
-    all_texts = scrape_pages(all_urls)
+        # Step 2: Scrape content from each URL
+        print("Scraping website content...")
+        all_texts_with_urls = []
 
-    # Step 3: Create FAISS index from scraped content
-    print("Indexing content...")
-    index = index_website_content(all_texts)
+        for url in all_urls:
+            # Discard url that contains "category" or "tag"
+            if "category" in url or "tag" in url:
+                continue
+            print(f"Scraping {url}...")
+            texts = scrape_website(url)  # Use the existing scrape function
+            if texts:
+                all_texts_with_urls.extend(chunk_website_content(texts, url))  # Include URLs in chunks
+        
+        # Step 3: Create FAISS index from scraped content
+        print("Indexing content...")
+
+        # Without tqdm
+        # embeddings = np.array([get_embedding(chunk) for chunk, _ in all_texts_with_urls])
+
+        # Now with tqdm
+        embeddings = np.array([get_embedding(chunk) for chunk, _ in tqdm(all_texts_with_urls, desc="Generating embeddings")])
+        index = create_faiss_index(embeddings)
+
+        # Save FAISS index and text chunks to disk
+        save_faiss_index(index)
+        save_text_chunks(all_texts_with_urls)
 
     # Step 4: Answer a question based on the indexed content
     question = "What is the main topic of the website?"
-    answer = generate_answer(question, index, all_texts)
+    answer = generate_answer(question, index, all_texts_with_urls)
     print("Answer:", answer)
-
 
 if __name__ == "__main__":
     main()

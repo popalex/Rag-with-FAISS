@@ -175,3 +175,4 @@ cython_debug/
 
 faiss_index.bin
 text_chunks.pkl
+chroma_db/

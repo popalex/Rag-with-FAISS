@@ -7,6 +7,7 @@ import faiss
 import numpy as np
 import openai
 import requests
+import streamlit as st
 import tiktoken
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
@@ -280,21 +281,27 @@ def generate_answer(query, index, text_chunks):
     url_references = "\n".join([f"Source: {url}" for _, url in relevant_chunks if url])
     return f"{answer}\n\n{url_references}"
 
-def main():
+st.cache_data
+def main(load_existing_indexes=False):
     """Main function to scrape, embed, index, and answer queries."""
 
+    st.write("Welcome to the AI Assistant!")
+    st.write("This AI assistant can answer questions based on the content of a website.")
     # Step 1: Load the FAISS index if the environment variable is set
-    if LOAD_EXISTING_INDEX:
+    if load_existing_indexes:
         print("Loading existing FAISS index and text chunks...")
+        st.write("Loading existing FAISS index and text chunks...")
         index = load_faiss_index()
         all_texts_with_urls = load_text_chunks()
     else:
         # Step 1: Crawl the website to get URLs
         print("Crawling the website...")
+        st.write("Crawling the website...")
         all_urls = crawl_website_using_sitemap(SITE_URL)
 
         # Step 2: Scrape content from each URL
         print("Scraping website content...")
+        st.write("Scraping website content...")
         all_texts_with_urls = []
 
         for url in all_urls:
@@ -308,6 +315,7 @@ def main():
         
         # Step 3: Create FAISS index from scraped content
         print("Indexing content...")
+        st.write("Indexing content...")
 
         # Without tqdm
         # embeddings = np.array([get_embedding(chunk) for chunk, _ in all_texts_with_urls])
@@ -319,14 +327,22 @@ def main():
         # Save FAISS index and text chunks to disk
         save_faiss_index(index)
         save_text_chunks(all_texts_with_urls)
+        return (index, all_texts_with_urls)
 
     # Step 4: Answer a question based on the indexed content
-    question = "What is the main topic of the website?"
-    answer = generate_answer(question, index, all_texts_with_urls)
-    print("Answer:", answer)
+    # question = "What is the main topic of the website?"
+    # answer = generate_answer(question, index, all_texts_with_urls)
+    # print("Answer:", answer)
+
+def streamlit_main(index, all_texts_with_urls):
+    query = st.text_input("Enter your query")
+    if query:
+        results = generate_answer(query, index, all_texts_with_urls)
+        st.write("Answer:", results)
 
 if __name__ == "__main__":
-    main()
+    index, all_texts_with_urls = main(LOAD_EXISTING_INDEX)
+    streamlit_main(index, all_texts_with_urls)
 
     # -----------------------------------------
     # How to Load FAISS Index from Disk Later:

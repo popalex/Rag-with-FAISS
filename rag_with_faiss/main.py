@@ -226,8 +226,15 @@ def rerank_with_llm(query, retrieved_chunks):
         return retrieved_chunks
         
     """Re-rank retrieved chunks using an LLM for better relevance."""
-    system_prompt = "You are a helpful AI that ranks text chunks based on their relevance to a query."
-    
+    # system_prompt = "You are a helpful AI that ranks text chunks based on their relevance to a query."
+    system_prompt = """
+    You are a helpful assistant that ranks text chunks based on their relevance to a user's query. 
+    When ranking, prioritize the content chunks that directly answer the user's question, 
+    even if those chunks are from specific blog posts or articles.
+    For example, if the query is asking about "Go articles", rank the chunks that mention "Go" or related topics higher.
+    For example, if the query is asking about overview about the website, rank the chunks that mention "overview" or "about" or related topics higher.
+    """
+
     # Construct the prompt that includes the query and retrieved chunks
     prompt = f"Query: {query}\n\n"
     for i, (chunk, url) in enumerate(retrieved_chunks):
@@ -362,7 +369,8 @@ def main():
         save_text_chunks(all_texts_with_urls)
 
     # Step 4: Answer a question based on the indexed content
-    question = "What is the main topic of the website?"
+    # question = "What is the main topic of the website?"
+    question = "What are some docker articles?"
     answer = generate_answer(question, index, all_texts_with_urls)
     print("Answer:", answer)
 

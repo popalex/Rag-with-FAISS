@@ -23,8 +23,12 @@ GPT_DEPLOYMENT = os.getenv("GPT_DEPLOYMENT")
 FAISS_INDEX_FILE = os.getenv("FAISS_INDEX_FILE", "faiss_index.bin")
 TEXT_CHUNKS_FILE = os.getenv("TEXT_CHUNKS_FILE", "text_chunks.pkl")
 SITE_URL = os.getenv("SITE_URL")
+TOP_K_RESULTS = int(os.getenv("TOP_K_RESULTS", 10))  # Number of top results to retrieve
+RERANK_MODEL = os.getenv("RERANK_MODEL", "gpt-4-turbo")  # Model for re-ranking
+RERANK_USING_LLM = os.getenv("RERANK_USING_LLM", "true").lower() == "true"  # Control re-ranking with LLM
 
 # Check if the index should be regenerated or loaded
+
 LOAD_EXISTING_INDEX = os.getenv("LOAD_EXISTING_INDEX", "false").lower() == "true"  # New variable to control loading
 
 
@@ -217,7 +221,40 @@ def save_text_chunks(text_chunks, filepath=TEXT_CHUNKS_FILE):
     except Exception as e:
         print(f"Error saving text chunks: {e}")
 
-def find_most_relevant(query, index, text_chunks, top_k=5):
+def rerank_with_llm(query, retrieved_chunks):
+    if not RERANK_USING_LLM:
+        return retrieved_chunks
+        
+    """Re-rank retrieved chunks using an LLM for better relevance."""
+    system_prompt = "You are a helpful AI that ranks text chunks based on their relevance to a query."
+    
+    # Construct the prompt that includes the query and retrieved chunks
+    prompt = f"Query: {query}\n\n"
+    for i, (chunk, url) in enumerate(retrieved_chunks):
+        prompt += f"Option {i+1}: {chunk}\n"
+
+    prompt += "\nRank these options from most relevant to least relevant (return numbers only):"
+    
+    # Use the openai.ChatCompletion API (with client.chat.completions.create)
+    response = client.chat.completions.create(
+        model=RERANK_MODEL,  # or gpt-4 if you have access
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    # # Extract ranking from response
+    # ranking = response['choices'][0]['message']['content'].strip().split()
+    # ranked_chunks = [retrieved_chunks[int(i)-1] for i in ranking if i.isdigit()]
+
+    # Extract ranking from response
+    ranking = response.choices[0].message.content.strip().split()
+    ranked_chunks = [retrieved_chunks[int(i)-1] for i in ranking if i.isdigit()]
+    
+    return ranked_chunks
+
+def find_most_relevant(query, index, text_chunks, top_k=10):
     """Finds the most relevant text chunks for a query using FAISS."""
     query_embedding = get_embedding(query).reshape(1, -1)
     distances, indices = index.search(query_embedding, top_k)
@@ -229,11 +266,13 @@ def find_most_relevant(query, index, text_chunks, top_k=5):
             chunk, url = text_chunks[i]  # Get chunk and its URL
             relevant_chunks.append((chunk, url))
     
-    return relevant_chunks if relevant_chunks else [("No relevant content found.", "")]
+    # return relevant_chunks if relevant_chunks else [("No relevant content found.", "")]
+    # 🔥 Re-rank using LLM before returning final results
+    return rerank_with_llm(query, relevant_chunks)
 
 def generate_answer(query, index, text_chunks):
     """Uses Azure OpenAI to generate an answer based on retrieved context."""
-    relevant_chunks = find_most_relevant(query, index, text_chunks)
+    relevant_chunks = find_most_relevant(query, index, text_chunks, TOP_K_RESULTS)
 
 
     # Flatten the list of chunks if any chunk is a list of strings.
@@ -283,6 +322,8 @@ def generate_answer(query, index, text_chunks):
 def main():
     """Main function to scrape, embed, index, and answer queries."""
 
+    print("LOAD_EXISTING_INDEX", LOAD_EXISTING_INDEX)
+    print("RE-RANKING USING LLM", RERANK_USING_LLM)
     # Step 1: Load the FAISS index if the environment variable is set
     if LOAD_EXISTING_INDEX:
         print("Loading existing FAISS index and text chunks...")

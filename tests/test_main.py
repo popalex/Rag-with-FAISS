@@ -44,15 +44,14 @@ def test_chunk_text():
 
 @patch('rag_with_faiss.main.client.embeddings.create')
 def test_get_embedding(mock_create):
-    # Create a mock response with the correct dictionary structure
+    # Create a mock object with an `embedding` attribute
+    mock_embedding = MagicMock()
+    mock_embedding.embedding = [0.1, 0.2, 0.3]  # ✅ Corrected
+
+    # Create a mock response that contains the mock embedding object
     mock_response = MagicMock()
-    mock_response.data = [
-        {
-            'embedding': [0.1, 0.2, 0.3],
-            'index': 0,
-            'object': 'embedding'
-        }
-    ]
+    mock_response.data = [mock_embedding]  # ✅ Now it's a list of objects, not dicts
+
     mock_create.return_value = mock_response
     
     embedding = main.get_embedding("test text")

@@ -143,7 +143,8 @@ def index_website_content(all_texts):
 def get_embedding(text):
     """Generates and returns an embedding for the given text."""
     response = client.embeddings.create(input=text, model=EMBEDDING_DEPLOYMENT)
-    return np.array(response.data[0].embedding)
+    # return np.array(response.data[0].embedding)
+    return np.array(response.data[0]['embedding'])
 
 def chunk_text(text_list, max_tokens=300):
     """Splits text into smaller chunks to ensure efficient processing."""

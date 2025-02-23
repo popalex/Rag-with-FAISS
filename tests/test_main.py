@@ -179,3 +179,7 @@ def test_generate_answer_no_results(mock_find_most_relevant):
     response = main.generate_answer("What is AI?", index, text_chunks)
     
     assert response == "No relevant content found in the retrieved website text."
+
+def test_load_faiss_index_invalid_file():
+    with pytest.raises(FileNotFoundError):
+        main.load_faiss_index("invalid_file.bin")

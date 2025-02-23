@@ -175,6 +175,8 @@ def load_faiss_index(filepath=FAISS_INDEX_FILE):
         return index
     except Exception as e:
         print(f"Error loading FAISS index: {e}")
+        # raise FileNotFoundError error instead of returning None
+        raise FileNotFoundError(f"Error loading FAISS index: {e}")
         return None
 
 # Save FAISS index to disk
